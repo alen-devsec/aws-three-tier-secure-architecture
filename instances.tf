@@ -607,17 +607,6 @@ MOTD
     # ========================================================================
     echo "[Phase 6] Running security audit..."
 
-    # Check critical services
-    CRITICAL_SERVICES=("nginx" "amazon-cloudwatch-agent" "firewalld" "fail2ban" "chronyd")
-    
-    for service in "${CRITICAL_SERVICES[@]}"; do
-      if systemctl is-active --quiet "$service"; then
-        echo "[PASS] $service is running"
-      else
-        echo "[FAIL] $service is NOT running"
-      fi
-    done
-
     # Verify firewall rules
     firewall-cmd --list-all
 

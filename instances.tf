@@ -45,9 +45,7 @@
 # - IMDSv2 enforcement (prevents SSRF attacks)
 # - Least privilege IAM policies
 # - Private subnets only (no public IPs)
-# - Security group
-
- tier isolation
+# - Security group tier isolation
 # - User data hardening script
 # - CloudWatch Logs integration
 # - VPC Flow Logs monitoring
@@ -73,6 +71,14 @@
 # ============================================================================
 # DATA SOURCES
 # ============================================================================
+
+# Reference the VPC created in network.tf
+data "aws_vpc" "main" {
+  filter {
+    name   = "tag:Name"
+    values = ["${var.project_name}-${var.environment}-vpc"]
+  }
+}
 
 # Get the latest Amazon Linux 2023 AMI
 # Amazon Linux 2023 is the latest generation Linux OS from AWS with:
@@ -178,7 +184,18 @@ locals {
     # - htop: System monitoring
     # - fail2ban: Intrusion prevention
     # - aide: File integrity monitoring
-    dnf install -y       amazon-cloudwatch-agent       aws-cli       htop       vim       curl       wget       git       jq       fail2ban       aide       chrony
+    dnf install -y \
+      amazon-cloudwatch-agent \
+      aws-cli \
+      htop \
+      vim \
+      curl \
+      wget \
+      git \
+      jq \
+      fail2ban \
+      aide \
+      chrony
 
     echo "[Phase 1] Package installation complete"
 
@@ -430,7 +447,7 @@ SYSCTL
         ],
         "metrics_collection_interval": 60,
         "resources": {
-          "": "*"
+          "*": "*"
         },
         "totalcpu": false
       },
@@ -490,7 +507,11 @@ SYSCTL
 CWAGENT
 
     # Start CloudWatch Agent
-    /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl       -a fetch-config       -m ec2       -s       -c file:/opt/aws/amazon-cloudwatch-agent/etc/config.json
+    /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+      -a fetch-config \
+      -m ec2 \
+      -s \
+      -c file:/opt/aws/amazon-cloudwatch-agent/etc/config.json
 
     systemctl enable amazon-cloudwatch-agent
     echo "[Phase 3] CloudWatch Agent configured and started"
@@ -537,8 +558,7 @@ server {
     # Health check endpoint
     location /health {
         access_log off;
-        return 200 "healthy
-";
+        return 200 "healthy\n";
         add_header Content-Type text/plain;
     }
 
@@ -646,7 +666,13 @@ MOTD
     dnf upgrade -y
     
     # Install packages
-    dnf install -y       amazon-cloudwatch-agent       aws-cli       python3       python3-pip       htop       fail2ban
+    dnf install -y \
+      amazon-cloudwatch-agent \
+      aws-cli \
+      python3 \
+      python3-pip \
+      htop \
+      fail2ban
     
     # Application setup (example: Python API)
     mkdir -p /opt/app
@@ -689,8 +715,6 @@ APISERVICE
     }
   )
 }
-
-# Continue in next message due to length...
 
 # ============================================================================
 # IAM ROLE: EC2 INSTANCE ROLE FOR WEB TIER
@@ -1044,30 +1068,6 @@ resource "aws_launch_template" "web_tier" {
     }
   }
 
-  # Optional: Additional data volume for logs, application data, etc.
-  # Uncomment if you need a separate volume for data persistence
-  # 
-  # block_device_mappings {
-  #   device_name = "/dev/sdf"
-  # 
-  #   ebs {
-  #     volume_size           = 50
-  #     volume_type           = "gp3"
-  #     iops                  = 3000
-  #     throughput            = 125
-  #     encrypted             = true
-  #     kms_key_id            = aws_kms_key.ebs.arn
-  #     delete_on_termination = false  # Persist data across instance replacements
-  # 
-  #     tags = merge(
-  #       local.common_tags,
-  #       {
-  #         Name = "${local.name_prefix}-web-tier-data"
-  #       }
-  #     )
-  #   }
-  # }
-
   # =========================================================================
   # INSTANCE METADATA SERVICE (IMDS) CONFIGURATION
   # =========================================================================
@@ -1258,8 +1258,6 @@ resource "aws_launch_template" "app_tier" {
     }
   )
 }
-
-# Continue in next part...
 
 # ============================================================================
 # APPLICATION LOAD BALANCER (ALB)
@@ -1495,9 +1493,6 @@ resource "aws_lb_target_group" "web_tier" {
     healthy_threshold   = 2               # Consecutive successes to mark healthy
     unhealthy_threshold = 3               # Consecutive failures to mark unhealthy
     matcher             = "200"           # Expected HTTP status code
-
-    # Health check response should contain this string (optional)
-    # matcher = "200-299"  # Accept any 2xx status code
   }
 
   # Deregistration delay (connection draining)
@@ -1629,10 +1624,6 @@ resource "aws_lb_listener" "https" {
     target_group_arn = aws_lb_target_group.web_tier.arn
   }
 
-  # Optional: Additional certificates for SNI
-  # Allows multiple domains on same listener
-  # depends_on = [aws_lb_listener_certificate.additional]
-
   tags = merge(
     local.common_tags,
     {
@@ -1676,7 +1667,6 @@ resource "aws_autoscaling_group" "web_tier" {
   launch_template {
     id      = aws_launch_template.web_tier.id
     version = "$Latest"  # Always use latest version
-    # version = "$Default"  # Use default version (safer for production)
   }
 
   # Health check configuration
@@ -1697,23 +1687,10 @@ resource "aws_autoscaling_group" "web_tier" {
 
   # Termination policies
   # Determines which instances to terminate during scale-in
-  # Order matters - first policy in list is applied first
-  # 
-  # Available policies:
-  # - OldestInstance: Terminate oldest instance
-  # - NewestInstance: Terminate newest instance
-  # - OldestLaunchConfiguration: Terminate instances with oldest launch config
-  # - ClosestToNextInstanceHour: Minimize instance hour charges
-  # - Default: Balanced across AZs, then oldest launch template
-  # - AllocationStrategy: For Spot instances
   termination_policies = [
     "OldestLaunchTemplate",
     "OldestInstance"
   ]
-
-  # Suspended processes (optional)
-  # Can pause specific Auto Scaling processes
-  # suspended_processes = ["HealthCheck", "ReplaceUnhealthy", "AZRebalance"]
 
   # Force delete: Delete ASG even if instances exist
   # Useful for development, dangerous for production
@@ -1723,17 +1700,9 @@ resource "aws_autoscaling_group" "web_tier" {
   # Maximum time to wait for desired capacity during creation
   wait_for_capacity_timeout = "10m"
 
-  # Wait for ELB capacity
-  # Minimum number of healthy instances in ELB before considering ASG healthy
-  # wait_for_elb_capacity = local.web_tier_config.min_size
-
   # Protect instances from scale-in
   # Prevents specific instances from being terminated
   protect_from_scale_in = false
-
-  # Service-linked role
-  # IAM role for Auto Scaling to manage instances
-  # service_linked_role_arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/aws-service-role/autoscaling.amazonaws.com/AWSServiceRoleForAutoScaling"
 
   # Instance refresh configuration
   # Enables rolling updates when launch template changes
@@ -1748,10 +1717,6 @@ resource "aws_autoscaling_group" "web_tier" {
       # Maximum time for instance to become healthy
       # After this time, instance is considered unhealthy and replaced
       instance_warmup = 300
-
-      # Checkpoint percentages for pause/approval
-      # checkpoint_percentages = [50, 100]
-      # checkpoint_delay = 3600  # Seconds to pause at checkpoint
     }
 
     triggers = ["tag"]  # Trigger refresh on tag changes
@@ -1802,18 +1767,6 @@ resource "aws_autoscaling_group" "web_tier" {
     propagate_at_launch = true
   }
 
-  # Lifecycle hooks (optional)
-  # Pause instance launch/terminate for custom actions
-  # initial_lifecycle_hook {
-  #   name                 = "web-tier-launch-hook"
-  #   default_result       = "CONTINUE"
-  #   heartbeat_timeout    = 300
-  #   lifecycle_transition = "autoscaling:EC2_INSTANCE_LAUNCHING"
-  #   
-  #   notification_target_arn = aws_sns_topic.asg_notifications.arn
-  #   role_arn                = aws_iam_role.asg_lifecycle_hook.arn
-  # }
-
   # Lifecycle: Create new ASG before destroying
   lifecycle {
     create_before_destroy = true
@@ -1859,9 +1812,6 @@ resource "aws_autoscaling_policy" "web_tier_cpu_tracking" {
   # Target tracking configuration
   target_tracking_configuration {
     # Predefined metric: ASGAverageCPUUtilization
-    # Other options: 
-    # - ASGAverageNetworkIn/Out
-    # - ALBRequestCountPerTarget
     predefined_metric_specification {
       predefined_metric_type = "ASGAverageCPUUtilization"
     }
@@ -1869,10 +1819,6 @@ resource "aws_autoscaling_policy" "web_tier_cpu_tracking" {
     # Target value (percentage)
     # 70% provides buffer for traffic spikes
     target_value = var.target_cpu_utilization
-
-    # Disable scale-in (optional)
-    # Only allow scale-out, manual scale-in
-    # disable_scale_in = false
 
     # Scale-in cooldown
     # Time to wait after scale-in before another scale-in

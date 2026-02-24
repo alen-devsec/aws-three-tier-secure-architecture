@@ -1,0 +1,21 @@
+name: "DevSecOps Security Audit"
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  security-scan:
+    name: "Infrastructure Analysis"
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Step 1: Checkout Source Code"
+        uses: actions/checkout@v4
+
+      - name: "Step 2: Security Scan with tfsec"
+        uses: aquasecurity/tfsec-action@v1.0.0
+
+      - name: "Step 3: Best Practices Check with TFLint"
+        uses: terraform-linters/setup-tflint@v3

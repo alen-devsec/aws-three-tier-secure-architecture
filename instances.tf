@@ -80,6 +80,67 @@ data "aws_vpc" "main" {
   }
 }
 
+# Reference public subnets created in network.tf
+data "aws_subnets" "public" {
+  filter {
+    name   = "vpc-id"
+    values = [data.aws_vpc.main.id]
+  }
+
+  tags = {
+    Type = "Public"
+  }
+}
+
+# Reference private subnets created in network.tf
+data "aws_subnets" "private" {
+  filter {
+    name   = "vpc-id"
+    values = [data.aws_vpc.main.id]
+  }
+
+  tags = {
+    Type = "Private"
+  }
+}
+
+# Reference security groups created in security_groups.tf
+data "aws_security_group" "alb" {
+  filter {
+    name   = "tag:Name"
+    values = ["${var.project_name}-${var.environment}-alb-sg"]
+  }
+
+  filter {
+    name   = "vpc-id"
+    values = [data.aws_vpc.main.id]
+  }
+}
+
+data "aws_security_group" "web_tier" {
+  filter {
+    name   = "tag:Name"
+    values = ["${var.project_name}-${var.environment}-web-tier-sg"]
+  }
+
+  filter {
+    name   = "vpc-id"
+    values = [data.aws_vpc.main.id]
+  }
+}
+
+data "aws_security_group" "app_tier" {
+  filter {
+    name   = "tag:Name"
+    values = ["${var.project_name}-${var.environment}-app-tier-sg"]
+  }
+
+  filter {
+    name   = "vpc-id"
+    values = [data.aws_vpc.main.id]
+  }
+}
+
 # Get the latest Amazon Linux 2023 AMI
 # Amazon Linux 2023 is the latest generation Linux OS from AWS with:
 # - Long-term support (5 years)
@@ -990,7 +1051,7 @@ resource "aws_launch_template" "web_tier" {
   # key_name = "my-key"  # DO NOT USE for production
 
   # VPC Security Groups
-  vpc_security_group_ids = [aws_security_group.web_tier.id]
+  vpc_security_group_ids = [data.aws_security_group.web_tier.id]
 
   # IAM Instance Profile for AWS service access
   iam_instance_profile {
@@ -1060,8 +1121,8 @@ resource "aws_launch_template" "web_tier" {
       tags = merge(
         local.common_tags,
         {
-          Name      = "${local.name_prefix}-web-tier-root"
-          Encrypted = "true"
+          Name       = "${local.name_prefix}-web-tier-root"
+          Encrypted  = "true"
           VolumeType = "gp3"
         }
       )
@@ -1140,7 +1201,7 @@ resource "aws_launch_template" "web_tier" {
     delete_on_termination = true
 
     # Security groups applied at network interface level
-    security_groups = [aws_security_group.web_tier.id]
+    security_groups = [data.aws_security_group.web_tier.id]
   }
 
   # Tag specifications for instances and volumes
@@ -1190,7 +1251,7 @@ resource "aws_launch_template" "app_tier" {
   image_id      = data.aws_ami.amazon_linux_2023.id
   instance_type = local.app_tier_config.instance_type
 
-  vpc_security_group_ids = [aws_security_group.app_tier.id]
+  vpc_security_group_ids = [data.aws_security_group.app_tier.id]
 
   iam_instance_profile {
     arn = aws_iam_instance_profile.app_tier_profile.arn
@@ -1233,7 +1294,7 @@ resource "aws_launch_template" "app_tier" {
   network_interfaces {
     associate_public_ip_address = false
     delete_on_termination       = true
-    security_groups             = [aws_security_group.app_tier.id]
+    security_groups             = [data.aws_security_group.app_tier.id]
   }
 
   tag_specifications {
@@ -1298,10 +1359,10 @@ resource "aws_lb" "main" {
 
   # Deploy ALB across all public subnets for high availability
   # ALB automatically load balances across AZs
-  subnets = aws_subnet.public[*].id
+  subnets = data.aws_subnets.public.ids
 
   # Security group for ALB (allows HTTP/HTTPS from internet)
-  security_groups = [aws_security_group.alb.id]
+  security_groups = [data.aws_security_group.alb.id]
 
   # Enable deletion protection for production
   # Prevents accidental deletion via API/Console
@@ -1656,7 +1717,7 @@ resource "aws_lb_listener" "https" {
 
 resource "aws_autoscaling_group" "web_tier" {
   name                = "${local.name_prefix}-web-tier-asg"
-  vpc_zone_identifier = aws_subnet.private[*].id  # Deploy in private subnets
+  vpc_zone_identifier = data.aws_subnets.private.ids  # Deploy in private subnets
 
   # Capacity configuration
   min_size         = local.web_tier_config.min_size
@@ -1905,7 +1966,7 @@ resource "aws_autoscaling_policy" "web_tier_scale_up" {
 
 resource "aws_autoscaling_group" "app_tier" {
   name                = "${local.name_prefix}-app-tier-asg"
-  vpc_zone_identifier = aws_subnet.private[*].id
+  vpc_zone_identifier = data.aws_subnets.private.ids
 
   min_size         = local.app_tier_config.min_size
   max_size         = local.app_tier_config.max_size
